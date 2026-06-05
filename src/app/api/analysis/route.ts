@@ -30,14 +30,24 @@ export async function GET(request: Request) {
       }
 
       const repository = new PostgresAnalysisRepository();
-      const [analysisJob, preparedDataset, analysisResult, deepAnalysisResult, recommendationResult] =
-        await Promise.all([
-          repository.findJobByProjectId(projectId, user.id),
-          repository.findPreparedDatasetByProjectId(projectId, user.id),
-          repository.findSentimentResultByProjectId(projectId, user.id),
-          repository.findDeepAnalysisResultByProjectId(projectId, user.id),
-          repository.findRecommendationResultByProjectId(projectId, user.id)
-        ]);
+      const analysisJob = await readAnalysisSection("analysis jobs", requestId, projectId, () =>
+        repository.findJobByProjectId(projectId, user.id)
+      );
+      const preparedDataset = await readAnalysisSection("prepared dataset", requestId, projectId, () =>
+        repository.findPreparedDatasetByProjectId(projectId, user.id)
+      );
+      const analysisResult = await readAnalysisSection("sentiment results", requestId, projectId, () =>
+        repository.findSentimentResultByProjectId(projectId, user.id)
+      );
+      const deepAnalysisResult = await readAnalysisSection("deep analysis results", requestId, projectId, () =>
+        repository.findDeepAnalysisResultByProjectId(projectId, user.id)
+      );
+      const recommendationResult = await readAnalysisSection("recommendations", requestId, projectId, () =>
+        repository.findRecommendationResultByProjectId(projectId, user.id)
+      );
+      await readAnalysisSection("report snapshots", requestId, projectId, () =>
+        repository.findReportSnapshotByProjectId(projectId, user.id)
+      );
 
       return successResponse(
         {
@@ -64,4 +74,35 @@ export async function POST(request: Request) {
       requestId
     )
   );
+}
+
+async function readAnalysisSection<TResult>(
+  section: string,
+  requestId: string,
+  projectId: string,
+  read: () => Promise<TResult>
+) {
+  try {
+    return await read();
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        code: "analysis_read_section_failed",
+        errorCode: getErrorCode(error),
+        message: error instanceof Error ? error.message : "Unknown read failure.",
+        projectId,
+        requestId,
+        section,
+        timestamp: new Date().toISOString()
+      })
+    );
+    throw error;
+  }
+}
+
+function getErrorCode(error: unknown) {
+  if (error && typeof error === "object" && "code" in error) {
+    return String(error.code);
+  }
+  return undefined;
 }

@@ -92,6 +92,10 @@ export async function searchPublicSources({
     return searchBrave({ dateRange, language, query, region });
   }
 
+  if (provider === "tavily") {
+    return searchTavily({ dateRange, language, query, region });
+  }
+
   return {
     provider,
     configured: false,
@@ -102,6 +106,87 @@ export async function searchPublicSources({
         ? "Search provider is disabled. Set SEARCH_PROVIDER=brave and BRAVE_SEARCH_API_KEY to enable public source discovery."
         : `${provider} provider adapter is declared but not implemented in this build.`,
       "No search results were fabricated."
+    ]
+  };
+}
+
+async function searchTavily({
+  dateRange,
+  language,
+  query,
+  region
+}: {
+  dateRange: string;
+  language: string;
+  query: string;
+  region: string;
+}): Promise<PublicSearchResponse> {
+  const apiKey = process.env.TAVILY_API_KEY;
+
+  if (!apiKey) {
+    return {
+      provider: "tavily",
+      configured: false,
+      query,
+      results: [],
+      limitations: [
+        "SEARCH_PROVIDER is set to tavily, but TAVILY_API_KEY is not configured.",
+        "No search results were fabricated."
+      ]
+    };
+  }
+
+  const response = await fetch("https://api.tavily.com/search", {
+    body: JSON.stringify({
+      include_answer: false,
+      include_raw_content: false,
+      max_results: 10,
+      query,
+      search_depth: "basic"
+    }),
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(`Tavily Search request failed with status ${response.status}.`);
+  }
+
+  const payload = (await response.json()) as TavilySearchPayload;
+  const results = (payload.results ?? [])
+    .filter((result) => result.url?.startsWith("http://") || result.url?.startsWith("https://"))
+    .slice(0, 10)
+    .map<PublicSearchResult>((result, index) => ({
+      id: `tavily-${index}-${hashText(result.url)}`,
+      title: stripHtml(result.title || result.url),
+      url: result.url,
+      snippet: stripHtml(result.content ?? ""),
+      source: "tavily",
+      publishedAt: result.published_date
+    }));
+
+  return {
+    provider: "tavily",
+    configured: true,
+    query,
+    results,
+    limitations: [
+      "Results come from Tavily Search public web retrieval.",
+      "Only result URLs, titles, snippets, and publicly accessible extracted page text are used.",
+      "No private, login-protected, CAPTCHA-protected, or hidden comments are accessed.",
+      dateRange && dateRange !== "Not specified"
+        ? `Date range was included in planning as "${dateRange}" but exact filtering depends on provider result metadata.`
+        : "No date range filter was applied.",
+      region && region !== "Not specified" && region.toLowerCase() !== "global"
+        ? `Region was included in planning as "${region}" but provider-level regional precision may vary.`
+        : "No region filter was applied.",
+      language && language !== "Not specified"
+        ? `Language was included in planning as "${language}" but provider-level language precision may vary.`
+        : "No language filter was applied."
     ]
   };
 }
@@ -216,6 +301,15 @@ interface BraveSearchPayload {
       url: string;
     }>;
   };
+}
+
+interface TavilySearchPayload {
+  results?: Array<{
+    content?: string;
+    published_date?: string;
+    title?: string;
+    url: string;
+  }>;
 }
 
 function normalizeLanguage(language: string) {

@@ -27,5 +27,9 @@ export async function query<TRecord extends QueryResultRow>(
 }
 
 function shouldUseSsl() {
-  return process.env.DATABASE_URL?.includes("supabase.co") || process.env.PGSSLMODE === "require";
+  return (
+    process.env.DATABASE_URL?.includes("supabase.co") ||
+    process.env.DATABASE_URL?.includes("pooler.supabase.com") ||
+    process.env.PGSSLMODE === "require"
+  );
 }

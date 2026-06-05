@@ -3,6 +3,8 @@ import type {
   AnalysisJob,
   AnalysisJobStatus,
   AnalysisResult,
+  AnalysisProvider,
+  ModelResultMetadata,
   MultiDimensionalAnalysisResult,
   PreparedDataset
 } from "@/types/analysis";
@@ -558,8 +560,8 @@ function mapJob(row: AnalysisJobRow): AnalysisJob {
     datasetId: row.dataset_id,
     preparedDatasetId: row.prepared_dataset_id ?? undefined,
     status: row.status,
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at),
     failureReason: row.failure_reason ?? undefined
   };
 }
@@ -570,9 +572,9 @@ function mapPreparedDataset(row: PreparedDatasetRow): PreparedDataset {
     projectId: row.project_id,
     datasetId: row.dataset_id,
     analysisJobId: row.analysis_job_id,
-    createdAt: row.created_at.toISOString(),
-    records: row.records,
-    summary: row.summary
+    createdAt: toIsoString(row.created_at),
+    records: parseJsonb(row.records, []),
+    summary: parseJsonb(row.summary, fallbackPreparationSummary())
   };
 }
 
@@ -583,11 +585,11 @@ function mapSentimentResult(row: SentimentResultRow): AnalysisResult {
     datasetId: row.dataset_id,
     preparedDatasetId: row.prepared_dataset_id,
     analysisJobId: row.analysis_job_id,
-    createdAt: row.created_at.toISOString(),
+    createdAt: toIsoString(row.created_at),
     engine: row.engine,
-    modelMetadata: row.model_metadata ?? defaultModelMetadata("rule-based"),
-    summary: row.summary,
-    records: row.records
+    modelMetadata: coerceModelMetadata(row.model_metadata, providerFromEngine(row.engine)),
+    summary: parseJsonb(row.summary, fallbackSentimentSummary()),
+    records: parseJsonb(row.records, [])
   };
 }
 
@@ -598,21 +600,21 @@ function mapDeepAnalysisResult(row: DeepAnalysisResultRow): MultiDimensionalAnal
     datasetId: row.dataset_id,
     analysisResultId: row.analysis_result_id,
     preparedDatasetId: row.prepared_dataset_id,
-    createdAt: row.created_at.toISOString(),
+    createdAt: toIsoString(row.created_at),
     engine: row.engine,
-    modelMetadata: row.model_metadata ?? defaultModelMetadata("rule-based"),
-    emotionDistribution: row.emotion_distribution,
-    stanceDistribution: row.stance_distribution,
-    aspects: row.aspects,
-    riskSignals: row.risk_signals,
-    records: row.records
+    modelMetadata: coerceModelMetadata(row.model_metadata, providerFromEngine(row.engine)),
+    emotionDistribution: parseJsonb(row.emotion_distribution, fallbackEmotionDistribution()),
+    stanceDistribution: parseJsonb(row.stance_distribution, fallbackStanceDistribution()),
+    aspects: parseJsonb(row.aspects, []),
+    riskSignals: parseJsonb(row.risk_signals, []),
+    records: parseJsonb(row.records, [])
   };
 }
 
-function defaultModelMetadata(provider: "rule-based") {
+function defaultModelMetadata(provider: AnalysisProvider): ModelResultMetadata {
   return {
     provider,
-    modelName: "Rule-Based Baseline",
+    modelName: provider === "fastapi" ? "FastAPI ML Adapter" : provider === "azure" ? "Azure ML Adapter" : "Rule-Based Baseline",
     modelVersion: "1.0.0",
     confidence: 0,
     processingTimeMs: 0
@@ -625,10 +627,10 @@ function mapRecommendationResult(row: RecommendationRow): RecommendationResult {
     projectId: row.project_id,
     analysisResultId: row.analysis_result_id,
     multiDimensionalAnalysisResultId: row.multi_dimensional_analysis_result_id,
-    createdAt: row.created_at.toISOString(),
+    createdAt: toIsoString(row.created_at),
     executiveActionSummary: row.executive_action_summary,
-    recommendations: row.recommendations,
-    roadmap: row.roadmap
+    recommendations: parseJsonb(row.recommendations, []),
+    roadmap: parseJsonb(row.roadmap, fallbackActionRoadmap(row.project_id))
   };
 }
 
@@ -638,6 +640,112 @@ function mapReportExport(row: ReportExportRow): ReportExport {
     reportSnapshotId: row.report_snapshot_id,
     projectId: row.project_id,
     exportType: row.export_type,
-    exportedAt: row.exported_at.toISOString()
+    exportedAt: toIsoString(row.exported_at)
+  };
+}
+
+function coerceModelMetadata(value: unknown, provider: AnalysisProvider): ModelResultMetadata {
+  const parsed = parseJsonb<Partial<ModelResultMetadata>>(value, {});
+  return {
+    ...defaultModelMetadata(provider),
+    ...parsed,
+    provider: parsed.provider ?? provider,
+    confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0,
+    processingTimeMs: typeof parsed.processingTimeMs === "number" ? parsed.processingTimeMs : 0
+  };
+}
+
+function parseJsonb<TValue>(value: unknown, fallback: TValue): TValue {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as TValue;
+    } catch {
+      return fallback;
+    }
+  }
+
+  return value as TValue;
+}
+
+function providerFromEngine(engine: string): AnalysisProvider {
+  if (engine.startsWith("fastapi")) {
+    return "fastapi";
+  }
+
+  if (engine.startsWith("azure")) {
+    return "azure";
+  }
+
+  return "rule-based";
+}
+
+function toIsoString(value: Date | string) {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function fallbackSentimentSummary() {
+  return {
+    negativeCount: 0,
+    negativePercentage: 0,
+    neutralCount: 0,
+    neutralPercentage: 0,
+    positiveCount: 0,
+    positivePercentage: 0,
+    totalAnalysed: 0
+  };
+}
+
+function fallbackPreparationSummary() {
+  return {
+    cleanRecords: 0,
+    language: "unknown" as const,
+    originalRecords: 0,
+    quality: {
+      averageTextLength: 0,
+      duplicateCount: 0,
+      emptyRemovedCount: 0,
+      longestTextLength: 0,
+      shortestTextLength: 0,
+      totalRecords: 0
+    },
+    readinessScore: 0,
+    removedDuplicates: 0,
+    removedEmptyRecords: 0
+  };
+}
+
+function fallbackEmotionDistribution() {
+  return {
+    anger: 0,
+    fear: 0,
+    joy: 0,
+    neutral: 0,
+    sadness: 0,
+    surprise: 0,
+    trust: 0
+  };
+}
+
+function fallbackStanceDistribution() {
+  return {
+    neutral: 0,
+    opposing: 0,
+    questioning: 0,
+    supportive: 0
+  };
+}
+
+function fallbackActionRoadmap(projectId: string) {
+  return {
+    generatedAt: new Date(0).toISOString(),
+    id: "unavailable",
+    longTerm: [],
+    projectId,
+    sevenDay: [],
+    thirtyDay: []
   };
 }
