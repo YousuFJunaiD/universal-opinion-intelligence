@@ -22,6 +22,7 @@ import {
 import { BrandMark } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { SHOWCASE_TITLE } from "@/lib/services/showcase-config";
 
 const valueCards = [
   {
@@ -87,7 +88,7 @@ const enterpriseCapabilities = [
   },
   {
     title: "User and workspace scope",
-    description: "Auth-aware API mode keeps projects and datasets scoped to the right owner or workspace.",
+    description: "API repositories implement owner/workspace scoping; live cross-tenant authorization testing remains open.",
     icon: LockKeyhole
   },
   {
@@ -121,6 +122,9 @@ export default function LandingPage() {
             <Button asChild variant="outline" className="hidden sm:inline-flex">
               <Link href="/dashboard">View dashboard</Link>
             </Button>
+            <Button asChild variant="outline" className="hidden sm:inline-flex">
+              <Link href="/showcase">Final Showcase Demo</Link>
+            </Button>
             <Button asChild>
               <Link href="/signup">
                 Get started
@@ -136,13 +140,13 @@ export default function LandingPage() {
           <div>
             <div className="inline-flex items-center gap-2 rounded-md border bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-600">
               <Sparkles className="h-4 w-4 text-amber-500" />
-              Enterprise opinion intelligence for research-grade reporting
+              College Phase-II · Opinion analysis and automated reporting
             </div>
             <h1 className="mt-6 max-w-4xl text-4xl font-bold leading-tight tracking-normal text-slate-950 md:text-6xl">
-              Universal Opinion Intelligence Platform
+              {SHOWCASE_TITLE}
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-              A chat-first SaaS workspace for collecting public or owned text, analysing opinion signals, and producing evidence-backed reports for brands, products, profiles, campaigns, and research topics.
+              Analyse supplied reviews, student feedback, service experiences, and public comments through a repeatable workflow with review-quality flags, evidence, and saved reports. Trust analysis supports manual review; it does not verify authenticity.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild className="h-11 px-5">
@@ -152,7 +156,10 @@ export default function LandingPage() {
                 </Link>
               </Button>
               <Button asChild variant="outline" className="h-11 px-5">
-                <Link href="/login">Login</Link>
+                <Link href="/showcase">
+                  Final Showcase Demo
+                  <Sparkles className="h-4 w-4" />
+                </Link>
               </Button>
               <Button asChild variant="ghost" className="h-11 px-5">
                 <Link href="/dashboard">View dashboard</Link>
@@ -161,7 +168,7 @@ export default function LandingPage() {
             <div className="mt-8 grid max-w-2xl gap-3 text-sm font-medium text-slate-600 sm:grid-cols-3">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-teal-600" />
-                No fake analysis
+                Engine metadata shown
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-teal-600" />
@@ -180,7 +187,7 @@ export default function LandingPage() {
                 <div className="flex items-center justify-between border-b pb-4">
                   <div>
                     <p className="text-sm font-bold">Opinion Command Center</p>
-                    <p className="text-xs font-medium text-slate-500">Live project snapshot</p>
+                    <p className="text-xs font-medium text-slate-500">Illustrative layout · synthetic values, not a live analysis</p>
                   </div>
                   <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-white">
                     <LineChart className="h-4 w-4" />
@@ -317,7 +324,7 @@ export default function LandingPage() {
       <section className="border-y bg-slate-950 text-white">
         <div className="mx-auto max-w-7xl px-6 py-16">
           <div className="max-w-3xl">
-            <p className="text-sm font-bold uppercase tracking-normal text-teal-200">Enterprise capabilities</p>
+            <p className="text-sm font-bold uppercase tracking-normal text-teal-200">Implemented architecture and deployment direction</p>
             <h2 className="mt-3 text-3xl font-bold tracking-normal md:text-4xl">
               Architecture that can move from demo to governed deployment.
             </h2>

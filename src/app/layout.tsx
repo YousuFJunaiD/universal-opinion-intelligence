@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import { SHOWCASE_TITLE } from "@/lib/services/showcase-config";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Universal Opinion Intelligence Platform",
-  description: "Chat-first opinion intelligence workspace for text datasets."
+  title: SHOWCASE_TITLE,
+  description: "Opinion analysis, review-quality flags, evidence and reports for human review."
 };
 
 export default function RootLayout({
