@@ -1,5 +1,11 @@
 # Universal Opinion Intelligence Platform
 
+## Reliable offline presentation startup
+
+Run `npm run demo` from this directory, then open the `/showcase` URL printed after **READY: HTTP 200**. No database, FastAPI, paid API or `.env` setup is needed for this demo. The launcher prepares pinned dependencies and a production build outside cloud-backed Desktop storage. Initial preparation may need internet; a prepared presentation runs locally. Run `npm run demo:prepare` before travelling and use `npm run demo:cached` as the presentation fallback. See [demo instructions](DEMO.md) and [installation guide](docs/INSTALLATION_GUIDE.md).
+
+`npm run dev` now uses the same local-only cache with source watching. For intentionally configured database/API development, use `npm run dev:direct` instead; it retains the original Next.js environment behavior. Research artifacts and historical benchmark results are not changed by the launcher.
+
 Universal Opinion Intelligence Platform is an enterprise-grade opinion intelligence system for transforming unstructured public and private text feedback into structured insights, reports, and decision-ready recommendations.
 
 The platform is built as a chat-first SaaS product: users describe a topic, brand, product, profile, campaign, website, or custom dataset, then the system guides them through data collection, cleaning, sentiment analysis, multi-dimensional analysis, recommendations, report generation, benchmark evaluation, and PDF export.

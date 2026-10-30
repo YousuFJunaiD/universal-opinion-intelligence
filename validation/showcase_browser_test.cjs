@@ -9,7 +9,10 @@ const path = require("node:path");
 const baseUrl = process.argv[2] || "http://127.0.0.1:3000";
 if (!["127.0.0.1", "localhost"].includes(new URL(baseUrl).hostname)) throw new Error("This verification script is for a local server only.");
 const key = "college-phase-2-showcase-report-v1";
-const output = path.resolve("validation/results/college-showcase-audit");
+// Never overwrite historical evidence by default. Explicit output overrides are
+// supported for callers that organize their own fresh verification directories.
+const output = path.resolve(process.env.SHOWCASE_TEST_OUTPUT_DIR || path.join(require("node:os").tmpdir(), `uoip-showcase-${Date.now()}-${process.pid}`));
+console.log(`Browser verification artifacts: ${output}`);
 const results = { checkedAt: new Date().toISOString(), baseUrl, checks: [], demos: [], errors: [], externalAttempts: [], apiCalls: [] };
 let browser;
 const check = async (name, action) => { await action(); results.checks.push({ name, status: "pass" }); console.log(`PASS ${name}`); };

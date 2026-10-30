@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/local-demo.cjs --dev",
+    "dev:direct": "next dev",
+    "demo": "node scripts/local-demo.cjs",
+    "demo:prepare": "node scripts/local-demo.cjs --prepare",
+    "demo:cached": "node scripts/local-demo.cjs --cached",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

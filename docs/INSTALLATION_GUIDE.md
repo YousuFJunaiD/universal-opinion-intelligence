@@ -2,9 +2,11 @@
 
 ## 1. Prerequisites
 
-Install the following:
+For the offline college presentation, only Node.js and npm are required. The repaired launcher was verified with Node.js 24.11.1, npm 11.6.2 and the lockfile's Next.js 15.5.18 on macOS ARM64. No dependency-version change was needed for the fix.
 
-- Node.js 18 or newer
+For other workflows, install the following:
+
+- Node.js compatible with the locked dependencies (Node.js 24.11.1 was verified)
 - npm
 - Python 3.10 or newer
 - PostgreSQL or Supabase project for API mode
@@ -33,25 +35,37 @@ The application can run without PostgreSQL in local mode.
 
 ## 3. Install Next.js Dependencies
 
-From the project root:
+For a presentation, **do not depend on Desktop `node_modules` being resident**. From the project root, prepare once before travelling:
 
 ```bash
-npm install
+npm run demo:prepare
 ```
+
+The launcher copies only `src/`, `public/` and build configuration into an OS-local cache, installs dependencies using the existing lockfile, and builds there. It first tries npm's offline package cache; if incomplete, initial installation needs internet. Development dependencies are included for TypeScript, lint and Tailwind. No `.env` files, private datasets or research/report archives are copied. Original source files, credentials and research results are not replaced.
+
+On macOS the runtime is under `~/Library/Caches/universal-opinion-intelligence/<workspace-id>/`, not Desktop/iCloud. The cache is derived from this workspace; its path is printed. This prevents cloud-placeholder reads in the Desktop dependency tree from blocking startup. Keep `src/` and `public/` downloaded while preparing. See [DEMO.md](../DEMO.md) for recovery and limitations.
+
+For direct backend development in a fully downloaded, non-cloud checkout, `npm ci` remains available; it is not required before running the demo launcher.
 
 ## 4. Run the Next.js App in Local Mode
 
 ```bash
-NEXT_PUBLIC_DATA_MODE=local npm run dev
+npm run demo
 ```
 
 Open:
 
 ```text
-http://localhost:3000
+http://127.0.0.1:3000/showcase
 ```
 
-If port 3000 is occupied, Next.js may choose another port.
+Wait for **READY: HTTP 200 and showcase content verified** and use the exact URL printed. The launcher tries ports 3000–3010 without stopping an existing process. Choose another starting port with `npm run demo -- --port 3100`. Leave the terminal open; Ctrl+C stops this demo only.
+
+Start with Product Reviews Demo → Run Analysis, then try Brand Feedback Demo and Public Figure Comments Demo. CSV uploads, dashboard results, heuristic review-quality flags, Markdown exports and browser Print / Save PDF work locally. These are browser-rule-based outputs, not the benchmarked RoBERTa predictions. Flags require human review and do not establish deceptive reviews. External collection, database persistence and transformer service routes are separate, optional workflows.
+
+Presentation fallback: `npm run demo:cached` starts the last prepared build without copying source or invoking npm/compilation. It deliberately excludes edits made since preparation. If Desktop itself is unavailable, use the **Offline rescue command** printed during preparation; that Node script is also stored outside cloud storage. A prepared build is required. If cache files were removed, prepare again before going offline. Browser reload still needs the running local server; this is not a service-worker/PWA installation.
+
+For local development with source watching, use `npm run dev`. Both demo and dev intentionally ignore credentials and force local mode. For the service-backed examples below, use `npm run dev:direct` in a fully downloaded checkout outside cloud storage; it is the original `next dev` command and reads your configured environment normally.
 
 ## 5. Run the FastAPI ML Service
 
@@ -74,7 +88,7 @@ curl http://127.0.0.1:8000/health
 Run the Next.js app with:
 
 ```bash
-ANALYSIS_PROVIDER=fastapi FASTAPI_ML_URL=http://127.0.0.1:8000 npm run dev
+ANALYSIS_PROVIDER=fastapi FASTAPI_ML_URL=http://127.0.0.1:8000 npm run dev:direct
 ```
 
 If FastAPI is unavailable, the app falls back to the deterministic rule-based engine and records fallback metadata.
@@ -109,13 +123,13 @@ NEXT_PUBLIC_DATA_MODE=local
 Development auth example:
 
 ```bash
-AUTH_MODE=dev DEV_USER_ID=00000000-0000-4000-8000-000000000001 DEV_USER_EMAIL=dev@uoip.local npm run dev
+AUTH_MODE=dev DEV_USER_ID=00000000-0000-4000-8000-000000000001 DEV_USER_EMAIL=dev@uoip.local npm run dev:direct
 ```
 
 Supabase auth example:
 
 ```bash
-AUTH_MODE=supabase NEXT_PUBLIC_SUPABASE_URL=... NEXT_PUBLIC_SUPABASE_ANON_KEY=... npm run dev
+AUTH_MODE=supabase NEXT_PUBLIC_SUPABASE_URL=... NEXT_PUBLIC_SUPABASE_ANON_KEY=... npm run dev:direct
 ```
 
 ### Database
@@ -128,7 +142,7 @@ AUTH_MODE=supabase NEXT_PUBLIC_SUPABASE_URL=... NEXT_PUBLIC_SUPABASE_ANON_KEY=..
 API/PostgreSQL mode example:
 
 ```bash
-NEXT_PUBLIC_DATA_MODE=api DATA_ACCESS_MODE=postgres DATABASE_URL=... npm run dev
+NEXT_PUBLIC_DATA_MODE=api DATA_ACCESS_MODE=postgres DATABASE_URL=... npm run dev:direct
 ```
 
 ### ML Provider
@@ -141,7 +155,7 @@ NEXT_PUBLIC_DATA_MODE=api DATA_ACCESS_MODE=postgres DATABASE_URL=... npm run dev
 FastAPI example:
 
 ```bash
-ANALYSIS_PROVIDER=fastapi FASTAPI_ML_URL=http://127.0.0.1:8000 npm run dev
+ANALYSIS_PROVIDER=fastapi FASTAPI_ML_URL=http://127.0.0.1:8000 npm run dev:direct
 ```
 
 ### Public Search Provider
@@ -162,7 +176,7 @@ SEARCH_PROVIDER=disabled
 Brave Search example:
 
 ```bash
-SEARCH_PROVIDER=brave BRAVE_SEARCH_API_KEY=your_key npm run dev
+SEARCH_PROVIDER=brave BRAVE_SEARCH_API_KEY=your_key npm run dev:direct
 ```
 
 Only public web results are discovered. The system does not bypass private pages, logins, CAPTCHA, or hidden comments.
@@ -193,7 +207,13 @@ Only public web results are discovered. The system does not bypass private pages
 
 ## 10. Testing Guide
 
-Run these checks from the project root:
+Launcher checks (no extra test dependency; local loopback access is required):
+
+```bash
+node --test validation/demo_launcher_test.cjs
+```
+
+In a fully downloaded checkout, run these checks from the project root. On the affected cloud-backed Desktop, run them from the **runtime directory printed by the launcher**, using its resident dependencies. `demo:prepare` also runs the production build's integrated lint/type checks:
 
 ```bash
 npm run typecheck
@@ -274,6 +294,10 @@ FASTAPI_ML_URL=https://your-ml-service.example.com
 
 | Problem | Likely Cause | Resolution |
 | --- | --- | --- |
+| `next dev` stalls before the banner or at Starting | Cloud-backed dependency files may be offloaded; confirmed on the affected macOS Desktop checkout | Use `npm run demo` or `npm run dev`; both use dependencies outside Desktop |
+| Source hydration timeout | Source or bundled CSV itself is not local | Use `demo:cached`; keep source files downloaded and prepare before travelling |
+| No prepared cache | First preparation has not succeeded or OS cache was removed | Run `npm run demo:prepare` while online, then rehearse |
+| Backend env ignored in demo | Deliberate secret-free local mode | Use `dev:direct` for explicitly configured service integration |
 | API mode returns configuration error | Missing `DATABASE_URL` | Set database connection string |
 | Supabase login fails | Missing Supabase env or provider disabled | Configure Supabase Auth |
 | FastAPI fallback used | ML service unavailable or timeout | Start FastAPI and set `FASTAPI_ML_URL` |
