@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawn, fork } = require("node:child_process");
-const { localEnv, stop, serve } = require("./demo-runtime.cjs");
+const { localEnv, stop, serve, startCached } = require("./demo-runtime.cjs");
 const ROOT = path.resolve(__dirname, "..");
 const CONFIGS = ["package.json", "package-lock.json", "tsconfig.json", "next-env.d.ts", "next.config.ts", "next.config.js", "next.config.mjs", "tailwind.config.ts", "tailwind.config.js", "postcss.config.js", "postcss.config.mjs", ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", "eslint.config.mjs"];
 const hash = data => crypto.createHash("sha256").update(data).digest("hex");
@@ -18,6 +18,7 @@ function options(args) {
   const out = { dev: false, cached: false, prepare: false, port: 3000 };
   for (let i = 0; i < args.length; i++) {
     if (["--dev", "--cached", "--prepare"].includes(args[i])) out[args[i].slice(2)] = true;
+    else if (args[i] === "--open") out.open = true;
     else if (args[i] === "--port") out.port = Number(args[++i]);
     else if (args[i] === "--hostname") { if (!["127.0.0.1", "localhost"].includes(args[++i])) throw new Error("The demo binds to loopback only. Use dev:direct for other network configurations."); }
     else throw new Error(`Unknown option: ${args[i]}`);
@@ -51,9 +52,14 @@ async function inputFiles(root) {
 async function stage(cache, dev) {
   const target = await fsp.mkdtemp(path.join(cache, "snapshot-"));
   const files = [];
+  const sourceMetadata = [];
   for (const name of await inputFiles(ROOT)) {
     process.send?.({ reading: name });
+    const before=await fsp.stat(path.join(ROOT,name));
     const bytes = await fsp.readFile(path.join(ROOT,name));
+    const stat=await fsp.stat(path.join(ROOT,name));
+    if(before.size!==stat.size||before.mtimeMs!==stat.mtimeMs||before.ctimeMs!==stat.ctimeMs)throw new Error(`Source changed during snapshot: ${name}. Retry preparation after editing; the previous prepared build is retained.`);
+    sourceMetadata.push({path:name,size:stat.size,mtimeMs:stat.mtimeMs,ctimeMs:stat.ctimeMs});
     const dest = path.join(target,name);
     await fsp.mkdir(path.dirname(dest), { recursive: true });
     await fsp.writeFile(dest, bytes);
@@ -66,7 +72,7 @@ async function stage(cache, dev) {
     try { await fsp.rename(target,app); }
     catch (e) { if (!["EEXIST", "ENOTEMPTY"].includes(e.code)) throw e; await fsp.rm(target,{recursive:true}); }
   }
-  const result = { app, fingerprint, files, lockHash: files.find(f=>f.path==="package-lock.json").sha256 };
+  const result = { app, fingerprint, files, sourceMetadata, sourceRoot:ROOT, configNames:CONFIGS, lockHash: files.find(f=>f.path==="package-lock.json").sha256 };
   process.send?.({ result });
   return result;
 }
@@ -157,7 +163,7 @@ async function main(args) {
   const opt=options(args),cache=cacheRoot();
   console.log(`[demo] Local-only mode. No database, Supabase, FastAPI or paid API is required.\n[demo] Cache: ${cache}`);
   await fsp.mkdir(cache,{recursive:true});
-  if(opt.cached){const r=JSON.parse(await fsp.readFile(path.join(cache,"last-ready.json"),"utf8"));console.log(`[demo] Cached build from ${r.preparedAt}; current workspace edits are NOT included.`);return serve(r.app,opt);}
+  if(!opt.prepare&&!opt.dev)return startCached(cache,opt);
   const lock=path.join(cache,"prepare.lock");
   const handle=await acquireLock(lock);
   let snapshot,closeWatch;
@@ -174,13 +180,23 @@ async function main(args) {
         if(!fs.existsSync(path.join(snapshot.app,".next/BUILD_ID")))throw new Error("Build did not produce BUILD_ID.");
         await fsp.writeFile(ready,JSON.stringify({...snapshot,preparedAt:new Date().toISOString(),node:process.version},null,2)+"\n");
       } else console.log("[demo] Reusing the matching prepared build; no compiler or install needed.");
-      const record=JSON.parse(await fsp.readFile(ready,"utf8"));
-      await fsp.writeFile(path.join(cache,"last-ready.json"),JSON.stringify(record,null,2)+"\n");
+      // Promote only after actual HTTP readiness. A failed preparation leaves
+      // the previous verified build available for presentations.
+      console.log("[demo] Verifying prepared build over loopback HTTP before promotion...");
+      await serve(snapshot.app,{port:opt.port,verifyOnly:true});
+      const record={...JSON.parse(await fsp.readFile(ready,"utf8")),...snapshot,verifiedAt:new Date().toISOString()};
+      await fsp.writeFile(path.join(cache,"last-ready.pending.json"),JSON.stringify(record,null,2)+"\n");
       await fsp.copyFile(path.join(__dirname,"demo-runtime.cjs"),path.join(cache,"start-demo.cjs"));
+      await fsp.writeFile(path.join(cache,"node-path.txt"),process.execPath+"\n");
+      if(process.platform==="darwin"){
+        await fsp.copyFile(path.join(ROOT,"Launch Opinion Intelligence.command"),path.join(cache,"Launch Opinion Intelligence.command"));
+        await fsp.chmod(path.join(cache,"Launch Opinion Intelligence.command"),0o755);
+      }
+      await fsp.rename(path.join(cache,"last-ready.pending.json"),path.join(cache,"last-ready.json"));
       console.log(`[demo] Offline rescue command: node ${JSON.stringify(path.join(cache,"start-demo.cjs"))}`);
     }
   } finally {await handle.close();await fsp.unlink(lock);}
-  if(opt.prepare){console.log("[demo] PREPARED. Run npm run demo (or demo:cached) to start and verify HTTP readiness.");return 0;}
+  if(opt.prepare){console.log("[demo] PREPARED AND HTTP VERIFIED. Double-click Launch Opinion Intelligence.command, or run npm run demo. Neither prepares or installs anything.");return 0;}
   if(opt.dev){closeWatch=await watchDevelopment(snapshot.app);console.log("[demo] Watching original src/public/config for development edits. Restart after dependency changes.");}
   try{return await serve(snapshot.app,opt);}finally{closeWatch?.();}
 }

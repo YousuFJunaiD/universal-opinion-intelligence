@@ -17,6 +17,9 @@ const results = { checkedAt: new Date().toISOString(), baseUrl, checks: [], demo
 let browser;
 const check = async (name, action) => { await action(); results.checks.push({ name, status: "pass" }); console.log(`PASS ${name}`); };
 async function run(page) {
+  // Functional regressions use Fast Mode. Dedicated presentation tests measure
+  // the paced mode separately instead of slowing every existing workflow test.
+  await page.getByRole("checkbox", { name: "Presentation Mode", exact: true }).uncheck();
   await page.getByRole("button", { name: "Run Analysis", exact: true }).click();
   await page.getByRole("status").filter({ hasText: "Analysis complete" }).waitFor();
 }

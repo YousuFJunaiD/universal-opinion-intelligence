@@ -49,6 +49,8 @@ For direct backend development in a fully downloaded, non-cloud checkout, `npm c
 
 ## 4. Run the Next.js App in Local Mode
 
+After `npm run demo:prepare` reports **PREPARED AND HTTP VERIFIED**, double-click `Launch Opinion Intelligence.command` in Finder. It opens `/showcase` in the browser and reuses an existing matching runtime on repeat launch. `npm run demo` and `demo:cached` are now cached-only; neither prepares, installs, downloads nor compiles. After changing source, explicitly run `demo:prepare` again. See [the presentation guide](../DEMO.md) for the cache-resident double-click fallback.
+
 ```bash
 npm run demo
 ```
@@ -62,6 +64,8 @@ http://127.0.0.1:3000/showcase
 Wait for **READY: HTTP 200 and showcase content verified** and use the exact URL printed. The launcher tries ports 3000–3010 without stopping an existing process. Choose another starting port with `npm run demo -- --port 3100`. Leave the terminal open; Ctrl+C stops this demo only.
 
 Start with Product Reviews Demo → Run Analysis, then try Brand Feedback Demo and Public Figure Comments Demo. CSV uploads, dashboard results, heuristic review-quality flags, Markdown exports and browser Print / Save PDF work locally. These are browser-rule-based outputs, not the benchmarked RoBERTa predictions. Flags require human review and do not establish deceptive reviews. External collection, database persistence and transformer service routes are separate, optional workflows.
+
+Presentation Mode is on by default: about ten seconds of explicitly labelled stage pacing around the actual local algorithms. Uncheck it for Fast Mode. Inputs are validated immediately; editing, switching datasets, reset or navigation cancels unfinished work without replacing the last completed report. The launcher checks source metadata without reading source contents: STALE means prepare again to include later edits; UNKNOWN means freshness could not be determined, not that the build is current.
 
 Presentation fallback: `npm run demo:cached` starts the last prepared build without copying source or invoking npm/compilation. It deliberately excludes edits made since preparation. If Desktop itself is unavailable, use the **Offline rescue command** printed during preparation; that Node script is also stored outside cloud storage. A prepared build is required. If cache files were removed, prepare again before going offline. Browser reload still needs the running local server; this is not a service-worker/PWA installation.
 

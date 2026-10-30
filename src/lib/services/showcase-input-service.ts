@@ -7,7 +7,7 @@ export interface ShowcaseInputRecord {
   source?: string;
 }
 
-const TEXT_HEADERS = ["text", "review", "comment", "content", "feedback"];
+const TEXT_HEADERS = ["text", "review", "comment", "content", "feedback", "feedback_text"];
 
 /** Small, bounded CSV/text intake. IDs identify rows even when source IDs repeat. */
 export function parseShowcaseInput(input: string, requireCsv = false): ShowcaseInputRecord[] {
@@ -25,8 +25,9 @@ export function parseShowcaseInput(input: string, requireCsv = false): ShowcaseI
     const rows = parseShowcaseCsv(trimmed);
     const headers = rows[0].map((header) => header.trim().toLowerCase());
     const textIndex = headers.findIndex((header) => TEXT_HEADERS.includes(header));
-    if (textIndex < 0) throw new Error("CSV needs a text, review, comment, content, or feedback column.");
-    const idIndex = headers.findIndex((header) => ["id", "record_id", "recordid"].includes(header));
+    if (textIndex < 0) throw new Error("CSV needs a text, review, comment, content, feedback, or feedback_text column.");
+    if (headers.filter((header) => TEXT_HEADERS.includes(header)).length !== 1) throw new Error("CSV must have exactly one supported text column.");
+    const idIndex = headers.findIndex((header) => ["id", "record_id", "recordid", "response_id"].includes(header));
     const sourceIndex = headers.findIndex((header) => ["source", "platform", "type"].includes(header));
     records = rows.slice(1).map((row, index) => {
       if (row.length !== headers.length) throw new Error(`CSV row ${index + 2} has an unexpected column count. Quote text containing commas.`);

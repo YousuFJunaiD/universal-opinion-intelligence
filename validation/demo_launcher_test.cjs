@@ -6,7 +6,7 @@ const path = require("node:path");
 const os = require("node:os");
 const http = require("node:http");
 const { options, cacheRoot, inputFiles, acquireLock } = require("../scripts/local-demo.cjs");
-const { localEnv, choosePort, probe } = require("../scripts/demo-runtime.cjs");
+const { localEnv, choosePort, probe, readPrepared, sourceFreshness } = require("../scripts/demo-runtime.cjs");
 
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "demo-launcher-test-"));
@@ -23,6 +23,33 @@ test("default demo and explicit modes are parsed", () => {
   assert.equal(options(["--cached"]).cached, true);
   assert.equal(options(["--prepare"]).prepare, true);
   assert.equal(options(["--hostname", "127.0.0.1"]).port, 3000);
+  assert.equal(options(["--open"]).open, true);
+});
+
+test("missing or unverified prepared builds fail without any installation", async t => {
+  const root=await fixture(t);
+  assert.throws(()=>readPrepared(root),/No compatible HTTP-verified/);
+  await fs.writeFile(path.join(root,"last-ready.json"),JSON.stringify({app:root,node:process.version}));
+  assert.throws(()=>readPrepared(root),/No compatible HTTP-verified/);
+});
+
+test("freshness detects source edits and additions using metadata, not content reads", async t => {
+  const root=await fixture(t), file=path.join(root,"src/page.ts");
+  await fs.writeFile(file,"synthetic source");
+  const metadata=[];
+  for(const name of ["src/page.ts","package-lock.json"]){const stat=await fs.stat(path.join(root,name));metadata.push({path:name,size:stat.size,mtimeMs:stat.mtimeMs,ctimeMs:stat.ctimeMs});}
+  const record={sourceRoot:root,sourceMetadata:metadata,configNames:["package-lock.json"]};
+  const syncFs=require("node:fs"),old=syncFs.readFileSync;
+  try {syncFs.readFileSync=()=>{throw Error("Source content must never be read");};assert.match(sourceFreshness(record),/No source metadata changes/);}finally{syncFs.readFileSync=old;}
+  await fs.writeFile(file,"changed synthetic source");
+  assert.match(sourceFreshness(record),/STALE/);
+  await fs.writeFile(path.join(root,"public/new.txt"),"synthetic");
+  assert.match(sourceFreshness(record),/STALE: source file set/);
+});
+
+test("missing source reports unknown freshness without pretending current", () => {
+  assert.match(sourceFreshness({}),/UNKNOWN/);
+  assert.match(sourceFreshness({sourceRoot:"/this-source-is-unavailable",sourceMetadata:[],configNames:[]}),/UNKNOWN/);
 });
 test("invalid ports and conflicting/unknown modes fail clearly", () => {
   for (const args of [["--port"], ["--port", "0"], ["--port", "65536"], ["--port", "3.5"], ["--dev", "--cached"], ["--hostname", "0.0.0.0"], ["--unknown"]]) assert.throws(() => options(args));

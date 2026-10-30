@@ -9,6 +9,7 @@ import {
   Download,
   FileText,
   Gauge,
+  CheckCircle2,
   Loader2,
   Printer,
   RefreshCw,
@@ -29,6 +30,23 @@ import {
 } from "@/lib/services/review-quality-service";
 
 const STORAGE_KEY = "college-phase-2-showcase-report-v1";
+const PRESENTATION_STAGES = [
+  "Preparing and validating input records",
+  "Classifying positive, negative and neutral sentiment",
+  "Checking generic, repeated and promotional-looking reviews",
+  "Extracting domain themes and summarizing evidence",
+  "Generating recommendations and preparing the saved report"
+];
+type PipelineProgress = { active: number; details: string[]; complete: boolean; elapsedMs?: number; paced: boolean };
+
+function presentationPause(signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) return reject(new DOMException("Cancelled", "AbortError"));
+    const abort = () => { window.clearTimeout(timer); reject(new DOMException("Cancelled", "AbortError")); };
+    const timer = window.setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 2000);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
 
 type ShowcaseSourceType = ShowcaseUseCase | "topic" | "public_url" | "pasted_reviews" | "csv_dataset";
 
@@ -230,8 +248,12 @@ export default function ShowcasePage() {
   const [isRunning, setIsRunning] = useState(false);
   const [report, setReport] = useState<ShowcaseReport | null>(null);
   const [csvInput, setCsvInput] = useState(false);
+  const [presentationMode, setPresentationMode] = useState(true);
+  const [pipeline, setPipeline] = useState<PipelineProgress | null>(null);
   const operationId = useRef(0);
-  const analysisTimer = useRef<number | null>(null);
+  const activeRun = useRef<AbortController | null>(null);
+  const activeFetch = useRef<AbortController | null>(null);
+  const activeReader = useRef<FileReader | null>(null);
 
   useEffect(() => {
     try {
@@ -256,7 +278,9 @@ export default function ShowcasePage() {
 
   useEffect(() => () => {
     operationId.current += 1;
-    if (analysisTimer.current !== null) window.clearTimeout(analysisTimer.current);
+    activeRun.current?.abort();
+    activeFetch.current?.abort();
+    activeReader.current?.abort();
   }, []);
 
   const suspiciousExamples = useMemo(() => {
@@ -274,27 +298,53 @@ export default function ShowcasePage() {
       .slice(0, 5);
   }, [report]);
 
-  function runShowcaseAnalysis() {
-    const currentOperation = ++operationId.current;
+  function invalidateOperation() {
+    operationId.current += 1;
+    activeRun.current?.abort(); activeRun.current = null;
+    activeFetch.current?.abort(); activeFetch.current = null;
+    activeReader.current?.abort(); activeReader.current = null;
+    setIsRunning(false);
+    setPipeline(null);
+    if (isRunning) setStatus("Analysis cancelled. Input changed; run again when ready. The previous completed report is unchanged.");
+    return operationId.current;
+  }
+
+  async function runShowcaseAnalysis() {
+    // The ref closes the repeat-click window before React renders disabled=true.
+    if (activeRun.current) return;
+    const currentOperation = invalidateOperation();
+    const started = performance.now();
+    let parsedRecords: ParsedRecord[];
+    try {
+      parsedRecords = parseShowcaseInput(inputText, csvInput);
+      if (!parsedRecords.length) throw new Error("No usable text found. Paste reviews/comments or select a demo dataset.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Input could not be validated.");
+      return;
+    }
+    const controller = new AbortController();
+    activeRun.current = controller;
+    const details: string[] = [];
+    const stage = async (index: number, detail: string) => {
+      if (controller.signal.aborted || currentOperation !== operationId.current) throw new DOMException("Cancelled", "AbortError");
+      details[index] = detail;
+      setPipeline({ active: index, details: [...details], complete: false, paced: presentationMode });
+      setStatus(`${PRESENTATION_STAGES[index]}. ${detail}`);
+      if (presentationMode) await presentationPause(controller.signal);
+      if (controller.signal.aborted || currentOperation !== operationId.current) throw new DOMException("Cancelled", "AbortError");
+    };
     setIsRunning(true);
-    setStatus("Preparing records and running local showcase analysis...");
-
-    analysisTimer.current = window.setTimeout(() => {
-      if (currentOperation !== operationId.current) return;
-      try {
-      const parsedRecords = parseShowcaseInput(inputText, csvInput);
-
-      if (!parsedRecords.length) {
-        setStatus("No usable text found. Paste reviews/comments or select a demo dataset.");
-        setIsRunning(false);
-        return;
-      }
-
+    try {
+      await stage(0, `${parsedRecords.length} valid records; duplicates retained as independent evidence.`);
       const sentimentRecords = parsedRecords.map(classifyRecord);
+      const labelCount = (label: SentimentLabel) => sentimentRecords.filter(record => record.sentiment === label).length;
+      await stage(1, `${labelCount("positive")} positive · ${labelCount("negative")} negative · ${labelCount("neutral")} neutral/tied. Local rules, not RoBERTa.`);
       const qualityFlags = flagReviewQuality(sentimentRecords);
       const qualitySummary = summarizeReviewQuality(qualityFlags);
+      await stage(2, `${qualitySummary.suspiciousCount} records flagged for human review. Flags do not confirm deception.`);
       const summary = buildSummary(sentimentRecords, qualitySummary);
       const themes = extractThemes(sentimentRecords, sourceType);
+      await stage(3, `${themes.length} repeated keyword groups; ${sentimentRecords.length} evidence rows summarized. Groups are lexical matches, not topic models.`);
       const nextReport: ShowcaseReport = {
         id: createId("showcase-report"),
         title: title.trim() || "College Phase-II Opinion Intelligence Showcase",
@@ -316,26 +366,32 @@ export default function ShowcasePage() {
         limitations
       };
 
+      await stage(4, `Recommendation and ${nextReport.records.length}-record report prepared; browser storage will be attempted at completion.`);
+      nextReport.createdAt = new Date().toISOString();
       setReport(nextReport);
+      setPipeline({ active: 4, details: [...details.slice(0, 4), `${nextReport.records.length}-record report ready. Engine: browser-rule-based-showcase.`], complete: true, elapsedMs: performance.now() - started, paced: presentationMode });
       try {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextReport));
         setStatus(`Analysis complete. Saved ${nextReport.records.length} records and report snapshot in browser localStorage.`);
       } catch {
         setStatus("Analysis complete, but browser storage is unavailable or full. Download or print this report now; it is not saved.");
       }
-      } catch (error) {
+    } catch (error) {
+      if (controller.signal.aborted || currentOperation !== operationId.current) return;
         setStatus(error instanceof Error ? error.message : "Analysis failed. Try a smaller input.");
-      } finally { setIsRunning(false); }
-    }, 250);
+      setPipeline(null);
+    } finally {
+      if (currentOperation === operationId.current) { activeRun.current = null; setIsRunning(false); }
+    }
   }
 
   async function loadDemoDataset(file: string, nextTitle: string, nextSourceType: ShowcaseSourceType) {
-    const currentOperation = ++operationId.current;
-    if (analysisTimer.current !== null) window.clearTimeout(analysisTimer.current);
-    setIsRunning(false);
+    const currentOperation = invalidateOperation();
+    const controller = new AbortController();
+    activeFetch.current = controller;
     setStatus(`Loading ${file}...`);
     try {
-    const response = await fetch(`/demo-data/${file}`, { signal: AbortSignal.timeout(8000) });
+    const response = await fetch(`/demo-data/${file}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) });
     if (!response.ok) {
       if (currentOperation === operationId.current) setStatus(`Could not load ${file}. Use pasted text fallback.`);
       return;
@@ -357,18 +413,18 @@ export default function ShowcasePage() {
 
   function handleCsvUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (!file) {
       return;
     }
+    const currentOperation = invalidateOperation();
     if (file.size > SHOWCASE_MAX_INPUT_CHARS) {
       setStatus("CSV is too large for the showcase. Use a file under 250 KB and at most 250 records.");
       return;
     }
-    const currentOperation = ++operationId.current;
-    if (analysisTimer.current !== null) window.clearTimeout(analysisTimer.current);
-    setIsRunning(false);
-
     const reader = new FileReader();
+    activeReader.current = reader;
+    setStatus(`Reading ${file.name}...`);
     reader.onload = () => {
       if (currentOperation !== operationId.current) return;
       const text = String(reader.result ?? "");
@@ -387,9 +443,7 @@ export default function ShowcasePage() {
   }
 
   function resetDemo() {
-    operationId.current += 1;
-    if (analysisTimer.current !== null) window.clearTimeout(analysisTimer.current);
-    setIsRunning(false);
+    invalidateOperation();
     let cleared = true;
     try { window.localStorage.removeItem(STORAGE_KEY); } catch { cleared = false; }
     setReport(null);
@@ -456,8 +510,8 @@ export default function ShowcasePage() {
           </p>
           <div aria-label="Use case selection" className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {showcaseUseCases.slice(0, 6).map((useCase) => (
-              <button aria-pressed={sourceType === useCase.value} disabled={isRunning} className={`rounded-md border p-4 text-left disabled:opacity-50 ${sourceType === useCase.value ? "border-blue-700 bg-blue-50" : "bg-white"}`} key={useCase.value} type="button" onClick={() => {
-                operationId.current += 1;
+              <button aria-pressed={sourceType === useCase.value} className={`rounded-md border p-4 text-left ${sourceType === useCase.value ? "border-blue-700 bg-blue-50" : "bg-white"}`} key={useCase.value} type="button" onClick={() => {
+                invalidateOperation();
                 setSourceType(useCase.value);
                 setTitle(`${useCase.label} Opinion Report`);
                 setStatus(`Selected ${useCase.label}. Existing text is unchanged; add relevant feedback, then run analysis.`);
@@ -467,6 +521,41 @@ export default function ShowcasePage() {
               </button>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section aria-label="Analysis pipeline" className="no-print mx-auto max-w-7xl px-6 pt-7">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold">From supplied text to reviewable evidence</h2>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">Engine: <strong>browser-rule-based-showcase</strong>. Deterministic browser rules; no cloud inference or RoBERTa. Flags request human review; rule scores are not calibrated probabilities.</p>
+            </div>
+            <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-slate-50 px-4 py-3 text-sm font-semibold">
+              <input type="checkbox" checked={presentationMode} onChange={event => {
+                invalidateOperation(); setPresentationMode(event.target.checked);
+                setStatus(event.target.checked ? "Presentation Mode enabled. About 10 seconds of labelled pacing; algorithms are unchanged." : "Fast Mode enabled. Same algorithms with no deliberate pacing.");
+              }} />
+              Presentation Mode
+            </label>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500">{presentationMode ? "Presentation Mode: about 10 seconds of intentional stage pacing, not measured compute time. Changing input cancels the pending run." : "Fast Mode: no presentation delays. The same validation, sentiment, quality and reporting algorithms run locally."}</p>
+          <ol className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {PRESENTATION_STAGES.map((name, index) => {
+              const done = !!pipeline && (pipeline.complete || index < pipeline.active);
+              const active = !!pipeline && !pipeline.complete && index === pipeline.active;
+              return <li key={name} data-testid={`pipeline-stage-${index}`} data-state={done ? "complete" : active ? "active" : "pending"} aria-current={active ? "step" : undefined} className={`rounded-lg border p-3 transition-colors motion-reduce:transition-none ${active ? "border-blue-600 bg-blue-50" : done ? "border-teal-200 bg-teal-50" : "border-slate-200 bg-slate-50"}`}>
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide">
+                  {done ? <CheckCircle2 className="h-4 w-4 text-teal-700" aria-hidden="true" /> : active ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none text-blue-700" aria-hidden="true" /> : <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-200">{index + 1}</span>}
+                  {done ? "Complete" : active ? "Current stage" : "Pending"}
+                </div>
+                <h3 className="mt-2 text-sm font-semibold leading-5">{name}</h3>
+                {pipeline?.details[index] && <p className="mt-2 text-xs leading-5 text-slate-600">{pipeline.details[index]}</p>}
+              </li>;
+            })}
+          </ol>
+          {pipeline?.complete && <p data-testid="pipeline-complete" className="mt-4 rounded-lg bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-900">Report complete · {((pipeline.elapsedMs ?? 0) / 1000).toFixed(2)} s elapsed{pipeline.paced ? " including intentional presentation pacing" : " in Fast Mode"}. Actual engine: browser-rule-based-showcase. Inspect the evidence below.</p>}
+          {isRunning && <Button variant="outline" className="mt-4" onClick={() => { invalidateOperation(); setStatus("Analysis cancelled. The previous completed report is unchanged."); }}>Cancel analysis</Button>}
         </div>
       </section>
 
@@ -485,19 +574,17 @@ export default function ShowcasePage() {
               <span className="text-sm font-bold text-slate-700">Report title / topic</span>
               <input
                 className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                onChange={(event) => { operationId.current += 1; setTitle(event.target.value); }}
+                onChange={(event) => { invalidateOperation(); setTitle(event.target.value); }}
                 value={title}
                 maxLength={200}
-                disabled={isRunning}
               />
             </label>
             <label className="space-y-2">
               <span className="text-sm font-bold text-slate-700">Use case / source context</span>
               <select
                 className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                onChange={(event) => { operationId.current += 1; setSourceType(event.target.value as ShowcaseSourceType); }}
+                onChange={(event) => { invalidateOperation(); setSourceType(event.target.value as ShowcaseSourceType); }}
                 value={sourceType}
-                disabled={isRunning}
               >
                 {sourceTypes.map((item) => (
                   <option key={item.value} value={item.value}>
@@ -512,11 +599,10 @@ export default function ShowcasePage() {
             <span className="text-sm font-bold text-slate-700">Public URL, optional</span>
             <input
               className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-              onChange={(event) => { operationId.current += 1; setPublicUrl(event.target.value); }}
+              onChange={(event) => { invalidateOperation(); setPublicUrl(event.target.value); }}
               placeholder="Source context only — paste the actual text below."
               value={publicUrl}
               maxLength={2000}
-              disabled={isRunning}
             />
             <span className="block text-xs font-semibold text-slate-500">
               This field does not fetch content. Analyze only text you are authorized to use; omit patient, student, and customer identifiers.
@@ -532,7 +618,6 @@ export default function ShowcasePage() {
                   key={dataset.file}
                   onClick={() => loadDemoDataset(dataset.file, dataset.title, dataset.sourceType)}
                   type="button"
-                  disabled={isRunning}
                 >
                   <span className="block text-sm font-bold text-slate-950">{dataset.label}</span>
                   <span className="mt-1 block text-sm leading-6 text-slate-600">{dataset.description}</span>
@@ -545,19 +630,18 @@ export default function ShowcasePage() {
             <span className="text-sm font-bold text-slate-700">Pasted reviews/comments or CSV text</span>
             <textarea
               className="min-h-64 w-full rounded-md border bg-white px-3 py-3 text-sm leading-6 outline-none focus:ring-2 focus:ring-primary/30"
-              onChange={(event) => { operationId.current += 1; setInputText(event.target.value); setCsvInput(false); }}
+              onChange={(event) => { invalidateOperation(); setInputText(event.target.value); setCsvInput(false); }}
               value={inputText}
-              disabled={isRunning}
               maxLength={SHOWCASE_MAX_INPUT_CHARS}
             />
-            <span className="block text-xs text-slate-600">One record per line, or CSV with a text/review/comment/content/feedback header. Maximum 250 records, 5,000 characters per record. Empty rows are skipped; duplicates are retained and flagged. Keyword groups need two mentions.</span>
+            <span className="block text-xs text-slate-600">One record per line, or CSV with a text/review/comment/content/feedback/feedback_text header. College CSV response_id values are retained; manual labels, categories, and notes are not used for inference. Maximum 250 records, 5,000 characters per record. Empty rows are skipped; duplicates are retained and flagged. Keyword groups need two mentions.</span>
           </label>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border bg-white px-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-50">
               <Upload className="h-4 w-4" />
               Upload CSV
-              <input accept=".csv,text/csv" className="sr-only" disabled={isRunning} onChange={handleCsvUpload} type="file" />
+              <input accept=".csv,text/csv" className="sr-only" onChange={handleCsvUpload} type="file" />
             </label>
             <Button disabled={isRunning} onClick={runShowcaseAnalysis}>
               {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -585,7 +669,8 @@ export default function ShowcasePage() {
           </div>
 
           {report ? (
-            <div className="mt-5 space-y-5">
+            <div key={report.id} className="mt-5 space-y-5" data-testid="completed-report" aria-busy={isRunning}>
+              <p className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isRunning ? "border-amber-200 bg-amber-50 text-amber-900" : "border-teal-200 bg-teal-50 text-teal-900"}`}>{isRunning ? "Previous completed snapshot — pending analysis has not replaced this report." : "Completed snapshot · browser-rule-based-showcase · local deterministic inference"}</p>
               <p className="text-sm font-semibold text-slate-600">Snapshot: {report.title} · {report.sourceLabel}</p>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <Metric label="Records" value={report.summary.total} />
@@ -637,7 +722,7 @@ export default function ShowcasePage() {
               </div>
 
               <div className="rounded-md border bg-white p-4">
-                <h3 className="font-bold">Repeated themes</h3>
+                <h3 className="font-bold">Repeated themes / keyword groups</h3>
                 {report.themes.length ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {report.themes.map((theme) => (
@@ -659,6 +744,17 @@ export default function ShowcasePage() {
                 <Button onClick={downloadReport} variant="outline">
                   <Download className="h-4 w-4" />
                   Download Markdown
+                </Button>
+                <Button variant="outline" onClick={() => {
+                  const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+                  const link = document.createElement("a");
+                  link.href = url;
+                  link.download = `${slugify(report.title)}-evaluation.json`;
+                  link.click();
+                  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }}>
+                  <Download className="h-4 w-4" />
+                  Download Evaluation JSON
                 </Button>
               </div>
             </div>
